@@ -15,6 +15,7 @@ let rec pp_type = function
   | Ast.Ref n -> "*" ^ n
   | Ast.Option t -> "Option<" ^ pp_type t ^ ">"
   | Ast.List t -> "List<" ^ pp_type t ^ ">"
+  | Ast.Set t -> "Set<" ^ pp_type t ^ ">"
   | Ast.Map (k, v) -> "Map<" ^ pp_type k ^ ", " ^ pp_type v ^ ">"
 
 let pp_literal = function

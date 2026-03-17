@@ -44,6 +44,7 @@ type typ =
   | Ref of string
   | Option of typ
   | List of typ
+  | Set of typ
   | Map of typ * typ
 
 type field = {

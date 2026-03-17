@@ -83,6 +83,7 @@ BoolLiteral     <- ('true' / 'false') ![a-zA-Z0-9_] Spacing
 Type            <- RefType
                  / OptionType
                  / ListType
+                 / SetType
                  / MapType
                  / Primitive
                  / NamedType
@@ -92,6 +93,11 @@ RefType         <- STAR PascalIdent
 OptionType      <- OPTION LANGLE Type RANGLE
 
 ListType        <- LIST LANGLE Type RANGLE
+
+# Set element must be a primitive or *Ref type (same constraint as Map key)
+SetType         <- SET LANGLE SetElement RANGLE
+
+SetElement      <- RefType / Primitive
 
 # Map key must be a primitive or *Ref type (enforced by grammar)
 MapType         <- MAP LANGLE MapKey COMMA Type RANGLE
@@ -117,7 +123,7 @@ ScreamingIdent  <- [A-Z] [A-Z0-9_]* Spacing
 Keyword         <- ( 'struct' / 'enum' / 'union' / 'service'
                    / 'raises' / 'string' / 'int64' / 'int' / 'float'
                    / 'byte' / 'bool' / 'binary' / 'uuid_v7' / 'uuid'
-                   / 'void' / 'Option' / 'List' / 'Map' )
+                   / 'void' / 'Option' / 'List' / 'Set' / 'Map' )
                    ![a-zA-Z0-9_]
 
 # ── Keywords (as tokens) ────────────────────────────────────────────
@@ -129,6 +135,7 @@ SERVICE         <- 'service' ![a-zA-Z0-9_] Spacing
 RAISES          <- 'raises'  ![a-zA-Z0-9_] Spacing
 OPTION          <- 'Option'  ![a-zA-Z0-9_] Spacing
 LIST            <- 'List'    ![a-zA-Z0-9_] Spacing
+SET             <- 'Set'     ![a-zA-Z0-9_] Spacing
 MAP             <- 'Map'     ![a-zA-Z0-9_] Spacing
 
 STRING          <- 'string'  ![a-zA-Z0-9_] Spacing

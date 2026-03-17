@@ -138,6 +138,11 @@ let rec parse_type inp : Ast.typ =
       let t = parse_type inp in
       expect_char inp '>';
       Ast.List t
+    end else if match_string inp "Set" then begin
+      expect_char inp '<';
+      let t = parse_set_element inp in
+      expect_char inp '>';
+      Ast.Set t
     end else if match_string inp "Map" then begin
       expect_char inp '<';
       let k = parse_map_key inp in
@@ -147,6 +152,19 @@ let rec parse_type inp : Ast.typ =
       Ast.Map (k, v)
     end else
       parse_primitive_or_named inp
+
+and parse_set_element inp : Ast.typ =
+  skip_whitespace inp;
+  match peek inp with
+  | Some '*' ->
+    advance inp; skip_whitespace inp;
+    let name = parse_ident inp in
+    Ast.Ref name
+  | _ ->
+    match parse_primitive inp with
+    | Some t -> t
+    | None ->
+      failwith (Printf.sprintf "%d:%d: Set element must be a primitive or *Ref type" inp.line inp.col)
 
 and parse_map_key inp : Ast.typ =
   skip_whitespace inp;

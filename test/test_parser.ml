@@ -119,6 +119,36 @@ let test_map_bare_complex_key_fails () =
      assert (String.length msg > 0);
      Printf.printf "test_map_bare_complex_key_fails: OK (%s)\n" msg)
 
+let test_set () =
+  match decls {|
+    struct Profile {
+      Set<*Skill> skills;
+      Set<string> tags;
+    }
+  |} with
+  | [Idlc.Ast.Struct s] ->
+    assert (List.length s.fields = 2);
+    (match (List.nth s.fields 0).typ with
+     | Idlc.Ast.Set (Idlc.Ast.Ref "Skill") -> ()
+     | _ -> failwith "expected Set<*Skill>");
+    (match (List.nth s.fields 1).typ with
+     | Idlc.Ast.Set (Idlc.Ast.Prim Idlc.Ast.String) -> ()
+     | _ -> failwith "expected Set<string>");
+    Printf.printf "test_set: OK\n"
+  | _ -> failwith "test_set: unexpected AST"
+
+let test_set_bare_complex_fails () =
+  (try
+     ignore (decls {|
+       struct Bad {
+         Set<Profile> s;
+       }
+     |});
+     failwith "should have failed"
+   with Failure msg ->
+     assert (String.length msg > 0);
+     Printf.printf "test_set_bare_complex_fails: OK (%s)\n" msg)
+
 let test_new_primitives () =
   match decls {|
     struct Record {
@@ -317,6 +347,8 @@ let () =
   test_option_type ();
   test_map_keys ();
   test_map_bare_complex_key_fails ();
+  test_set ();
+  test_set_bare_complex_fails ();
   test_new_primitives ();
   test_service ();
   test_raises ();
