@@ -128,7 +128,19 @@ let rec parse_type inp : Ast.typ =
     let name = parse_ident inp in
     Ast.Ref name
   | _ ->
-    if match_string inp "Option" then begin
+    if match_string inp "Tuple" then begin
+      expect_char inp '<';
+      let first = parse_type inp in
+      let rec go acc =
+        skip_whitespace inp;
+        match peek inp with
+        | Some ',' -> advance inp; skip_whitespace inp; go (parse_type inp :: acc)
+        | _ -> List.rev acc
+      in
+      let types = go [first] in
+      expect_char inp '>';
+      Ast.Tuple types
+    end else if match_string inp "Option" then begin
       expect_char inp '<';
       let t = parse_type inp in
       expect_char inp '>';
@@ -184,12 +196,27 @@ and parse_primitive_or_named inp =
   | Some t -> t
   | None -> Ast.Named (parse_ident inp)
 
-let parse_literal inp : Ast.literal =
+let rec parse_literal inp : Ast.literal =
   skip_whitespace inp;
   match peek inp with
   | Some '"' ->
     let s = parse_string_literal inp in
     Ast.Lit_string s
+  | Some '[' ->
+    advance inp; skip_whitespace inp;
+    let rec go acc =
+      skip_whitespace inp;
+      match peek inp with
+      | Some ']' -> advance inp; skip_whitespace inp; Ast.Lit_array (List.rev acc)
+      | _ ->
+        let lit = parse_literal inp in
+        skip_whitespace inp;
+        (match peek inp with
+         | Some ',' -> advance inp; skip_whitespace inp
+         | _ -> ());
+        go (lit :: acc)
+    in
+    go []
   | Some ('0'..'9' | '-') ->
     let start = inp.pos in
     (match peek inp with
@@ -412,6 +439,15 @@ let parse_service inp anns : Ast.decl =
   let methods = go [] in
   Ast.Service { annotations = anns; name; methods; loc = l }
 
+let parse_const inp : Ast.decl =
+  let l = loc inp in
+  ignore (match_string inp "const");
+  let name = parse_ident inp in
+  expect_char inp '=';
+  let value = parse_literal inp in
+  expect_char inp ';';
+  Ast.Const { name; value; loc = l }
+
 let parse_decl inp : Ast.decl =
   let anns = parse_annotations inp in
   skip_whitespace inp;
@@ -434,6 +470,7 @@ let parse_decl inp : Ast.decl =
   | "enum"    -> parse_enum inp anns
   | "union"   -> parse_union inp anns
   | "service" -> parse_service inp anns
+  | "const"   -> parse_const inp
   | w -> failwith (Printf.sprintf "%d:%d: expected declaration, got '%s'" inp.line inp.col w)
 
 let parse_file src : Ast.file =

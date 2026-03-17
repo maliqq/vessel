@@ -28,10 +28,17 @@ DirectiveArgs   <- LPAREN NamedArgs RPAREN
 
 # ── Top-level declarations ───────────────────────────────────────────
 
-Declaration     <- StructDecl
+Declaration     <- ConstDecl
+                 / StructDecl
                  / EnumDecl
                  / UnionDecl
                  / ServiceDecl
+
+ConstDecl       <- CONST Ident EQUAL ConstValue SEMI
+
+ConstValue      <- ArrayLiteral / Literal
+
+ArrayLiteral    <- LBRACKET (Literal (COMMA Literal)*)? RBRACKET
 
 StructDecl      <- Annotation* STRUCT PascalIdent LBRACE Field* RBRACE
 
@@ -82,6 +89,7 @@ BoolLiteral     <- ('true' / 'false') ![a-zA-Z0-9_] Spacing
 
 Type            <- RefType
                  / OptionType
+                 / TupleType
                  / ListType
                  / SetType
                  / MapType
@@ -91,6 +99,8 @@ Type            <- RefType
 RefType         <- STAR PascalIdent
 
 OptionType      <- OPTION LANGLE Type RANGLE
+
+TupleType       <- TUPLE LANGLE Type (COMMA Type)* RANGLE
 
 ListType        <- LIST LANGLE Type RANGLE
 
@@ -123,7 +133,8 @@ ScreamingIdent  <- [A-Z] [A-Z0-9_]* Spacing
 Keyword         <- ( 'struct' / 'enum' / 'union' / 'service'
                    / 'raises' / 'string' / 'int64' / 'int' / 'float'
                    / 'byte' / 'bool' / 'binary' / 'uuid_v7' / 'uuid'
-                   / 'void' / 'Option' / 'List' / 'Set' / 'Map' )
+                   / 'void' / 'Option' / 'Tuple' / 'List' / 'Set' / 'Map'
+                   / 'const' )
                    ![a-zA-Z0-9_]
 
 # ── Keywords (as tokens) ────────────────────────────────────────────
@@ -133,7 +144,9 @@ ENUM            <- 'enum'    ![a-zA-Z0-9_] Spacing
 UNION           <- 'union'   ![a-zA-Z0-9_] Spacing
 SERVICE         <- 'service' ![a-zA-Z0-9_] Spacing
 RAISES          <- 'raises'  ![a-zA-Z0-9_] Spacing
+CONST           <- 'const'   ![a-zA-Z0-9_] Spacing
 OPTION          <- 'Option'  ![a-zA-Z0-9_] Spacing
+TUPLE           <- 'Tuple'   ![a-zA-Z0-9_] Spacing
 LIST            <- 'List'    ![a-zA-Z0-9_] Spacing
 SET             <- 'Set'     ![a-zA-Z0-9_] Spacing
 MAP             <- 'Map'     ![a-zA-Z0-9_] Spacing
@@ -165,6 +178,8 @@ EQUAL           <- '=' Spacing
 PIPE            <- '|' Spacing
 QUESTION        <- '?' Spacing
 HASH            <- '#' Spacing
+LBRACKET        <- '[' Spacing
+RBRACKET        <- ']' Spacing
 
 # ── Spacing & comments ──────────────────────────────────────────────
 

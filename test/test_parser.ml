@@ -338,7 +338,61 @@ service Company {
   let out = Idlc.Printer.pp_file ast in
   Printf.printf "--- roundtrip ---\n%s\n" out
 
+let test_const () =
+  match decls {|
+    const MAX_RETRIES = 3;
+    const API_VERSION = "1.0";
+    const DEBUG = true;
+    const RATE = 0.5;
+    const SUPPORTED_LANGS = ["en", "fr", "de"];
+    const LIMITS = [10, 25, 50, 100];
+  |} with
+  | [ Idlc.Ast.Const c1; Idlc.Ast.Const c2; Idlc.Ast.Const c3;
+      Idlc.Ast.Const c4; Idlc.Ast.Const c5; Idlc.Ast.Const c6 ] ->
+    assert (c1.name = "MAX_RETRIES");
+    (match c1.value with Idlc.Ast.Lit_int 3 -> () | _ -> failwith "expected 3");
+    assert (c2.name = "API_VERSION");
+    (match c2.value with Idlc.Ast.Lit_string "1.0" -> () | _ -> failwith "expected 1.0");
+    assert (c3.name = "DEBUG");
+    (match c3.value with Idlc.Ast.Lit_bool true -> () | _ -> failwith "expected true");
+    assert (c4.name = "RATE");
+    (match c4.value with Idlc.Ast.Lit_float _ -> () | _ -> failwith "expected float");
+    assert (c5.name = "SUPPORTED_LANGS");
+    (match c5.value with
+     | Idlc.Ast.Lit_array [Idlc.Ast.Lit_string "en"; Idlc.Ast.Lit_string "fr"; Idlc.Ast.Lit_string "de"] -> ()
+     | _ -> failwith "expected string array");
+    assert (c6.name = "LIMITS");
+    (match c6.value with
+     | Idlc.Ast.Lit_array [Idlc.Ast.Lit_int 10; Idlc.Ast.Lit_int 25; Idlc.Ast.Lit_int 50; Idlc.Ast.Lit_int 100] -> ()
+     | _ -> failwith "expected int array");
+    Printf.printf "test_const: OK\n"
+  | _ -> failwith "test_const: unexpected AST"
+
+let test_tuple () =
+  match decls {|
+    struct Event {
+      Tuple<int, int, int> date;
+      Tuple<float, float> coordinates;
+      Tuple<string, int, bool> record;
+    }
+  |} with
+  | [Idlc.Ast.Struct s] ->
+    assert (List.length s.fields = 3);
+    (match (List.nth s.fields 0).typ with
+     | Idlc.Ast.Tuple [Idlc.Ast.Prim Idlc.Ast.Int; Idlc.Ast.Prim Idlc.Ast.Int; Idlc.Ast.Prim Idlc.Ast.Int] -> ()
+     | _ -> failwith "expected Tuple<int, int, int>");
+    (match (List.nth s.fields 1).typ with
+     | Idlc.Ast.Tuple [Idlc.Ast.Prim Idlc.Ast.Float; Idlc.Ast.Prim Idlc.Ast.Float] -> ()
+     | _ -> failwith "expected Tuple<float, float>");
+    (match (List.nth s.fields 2).typ with
+     | Idlc.Ast.Tuple [Idlc.Ast.Prim Idlc.Ast.String; Idlc.Ast.Prim Idlc.Ast.Int; Idlc.Ast.Prim Idlc.Ast.Bool] -> ()
+     | _ -> failwith "expected Tuple<string, int, bool>");
+    Printf.printf "test_tuple: OK\n"
+  | _ -> failwith "test_tuple: unexpected AST"
+
 let () =
+  test_const ();
+  test_tuple ();
   test_struct ();
   test_enum ();
   test_union ();

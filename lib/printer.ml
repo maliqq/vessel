@@ -14,15 +14,17 @@ let rec pp_type = function
   | Ast.Named n -> n
   | Ast.Ref n -> "*" ^ n
   | Ast.Option t -> "Option<" ^ pp_type t ^ ">"
+  | Ast.Tuple ts -> "Tuple<" ^ String.concat ", " (List.map pp_type ts) ^ ">"
   | Ast.List t -> "List<" ^ pp_type t ^ ">"
   | Ast.Set t -> "Set<" ^ pp_type t ^ ">"
   | Ast.Map (k, v) -> "Map<" ^ pp_type k ^ ", " ^ pp_type v ^ ">"
 
-let pp_literal = function
+let rec pp_literal = function
   | Ast.Lit_string s -> "\"" ^ s ^ "\""
   | Ast.Lit_int i -> string_of_int i
   | Ast.Lit_float f -> string_of_float f
   | Ast.Lit_bool b -> string_of_bool b
+  | Ast.Lit_array xs -> "[" ^ String.concat ", " (List.map pp_literal xs) ^ "]"
 
 let pp_args = function
   | Ast.Args_none -> ""
@@ -90,6 +92,8 @@ let pp_decl = function
     ^ (if anns <> [] then "\n" else "")
     ^ "service " ^ s.name ^ " {\n"
     ^ String.concat "\n" methods ^ "\n}"
+  | Ast.Const c ->
+    "const " ^ c.name ^ " = " ^ pp_literal c.value ^ ";"
 
 let pp_file file =
   let dirs = match file.Ast.directives with

@@ -8,6 +8,7 @@ type literal =
   | Lit_int of int
   | Lit_float of float
   | Lit_bool of bool
+  | Lit_array of literal list
 
 type args =
   | Args_none
@@ -43,6 +44,7 @@ type typ =
   | Named of string
   | Ref of string
   | Option of typ
+  | Tuple of typ list
   | List of typ
   | Set of typ
   | Map of typ * typ
@@ -98,6 +100,11 @@ type decl =
       annotations : annotation list;
       name : string;
       methods : method_decl list;
+      loc : loc;
+    }
+  | Const of {
+      name : string;
+      value : literal;
       loc : loc;
     }
 
