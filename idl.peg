@@ -1,0 +1,170 @@
+# IDL PEG Grammar — MVP
+#
+# Targets the syntax defined in prototype.md.
+# Intended for use with an OCaml PEG/packrat parser.
+#
+# Naming conventions:
+#   primitives       → lowercase    (string, int, float, bool, binary, void)
+#   struct/enum/union → PascalCase  (Profile, EmploymentType)
+#   enum members     → SCREAMING    (FULL_TIME, CONTRACT)
+#
+# Map key restriction:
+#   Map<K, V> — K must be a primitive or *Ref type, V can be any type.
+#
+# Optionality:
+#   Option<T> is a container type.
+#   field? is sugar for Option<T> at the field level.
+
+# ── Entry ────────────────────────────────────────────────────────────
+
+File            <- Spacing Directive* Declaration* EOF
+
+# ── File-level directives ───────────────────────────────────────────
+
+Directive       <- HASH Ident DirectiveArgs? Spacing
+
+DirectiveArgs   <- LPAREN NamedArgs RPAREN
+                 / LPAREN Literal RPAREN
+
+# ── Top-level declarations ───────────────────────────────────────────
+
+Declaration     <- StructDecl
+                 / EnumDecl
+                 / UnionDecl
+                 / ServiceDecl
+
+StructDecl      <- Annotation* STRUCT PascalIdent LBRACE Field* RBRACE
+
+Field           <- Annotation* Type Ident QUESTION? SEMI
+
+EnumDecl        <- Annotation* ENUM PascalIdent LBRACE EnumMember* RBRACE
+
+EnumMember      <- Annotation* ScreamingIdent SEMI
+
+UnionDecl       <- Annotation* UNION PascalIdent EQUAL UnionVariants SEMI
+
+UnionVariants   <- Type (PIPE Type)*
+
+ServiceDecl     <- Annotation* SERVICE PascalIdent LBRACE MethodDecl* RBRACE
+
+MethodDecl      <- Annotation* Ident LPAREN ParamList? RPAREN ReturnType RaisesClause? SEMI
+
+ParamList       <- Param (COMMA Param)*
+
+Param           <- Type Ident
+
+ReturnType      <- Type
+
+RaisesClause    <- RAISES PascalIdent (COMMA PascalIdent)*
+
+# ── Annotations ──────────────────────────────────────────────────────
+
+Annotation      <- AT Ident AnnotationArgs? Spacing
+
+AnnotationArgs  <- LPAREN NamedArgs RPAREN
+                 / LPAREN Literal RPAREN
+
+NamedArgs       <- NamedArg (COMMA NamedArg)*
+
+NamedArg        <- Ident EQUAL Literal
+
+# ── Literals ─────────────────────────────────────────────────────────
+
+Literal         <- StringLiteral / FloatLiteral / IntLiteral / BoolLiteral
+
+FloatLiteral    <- '-'? [0-9]+ '.' [0-9]+ Spacing
+
+IntLiteral      <- '-'? [0-9]+ Spacing
+
+BoolLiteral     <- ('true' / 'false') ![a-zA-Z0-9_] Spacing
+
+# ── Types ────────────────────────────────────────────────────────────
+
+Type            <- RefType
+                 / OptionType
+                 / ListType
+                 / MapType
+                 / Primitive
+                 / NamedType
+
+RefType         <- STAR PascalIdent
+
+OptionType      <- OPTION LANGLE Type RANGLE
+
+ListType        <- LIST LANGLE Type RANGLE
+
+# Map key must be a primitive or *Ref type (enforced by grammar)
+MapType         <- MAP LANGLE MapKey COMMA Type RANGLE
+
+MapKey          <- RefType / Primitive
+
+NamedType       <- PascalIdent
+
+Primitive       <- STRING / INT64 / INT / FLOAT / BYTE / BOOL
+                 / BINARY / UUID_V7 / UUID / VOID
+
+# ── Identifiers ──────────────────────────────────────────────────────
+
+# Any identifier (fields, params, method names)
+Ident           <- !Keyword [a-zA-Z_] [a-zA-Z0-9_]* Spacing
+
+# PascalCase identifier (struct, enum, union names; type references)
+PascalIdent     <- !Keyword [A-Z] [a-zA-Z0-9_]* Spacing
+
+# SCREAMING_CASE identifier (enum members)
+ScreamingIdent  <- [A-Z] [A-Z0-9_]* Spacing
+
+Keyword         <- ( 'struct' / 'enum' / 'union' / 'service'
+                   / 'raises' / 'string' / 'int64' / 'int' / 'float'
+                   / 'byte' / 'bool' / 'binary' / 'uuid_v7' / 'uuid'
+                   / 'void' / 'Option' / 'List' / 'Map' )
+                   ![a-zA-Z0-9_]
+
+# ── Keywords (as tokens) ────────────────────────────────────────────
+
+STRUCT          <- 'struct'  ![a-zA-Z0-9_] Spacing
+ENUM            <- 'enum'    ![a-zA-Z0-9_] Spacing
+UNION           <- 'union'   ![a-zA-Z0-9_] Spacing
+SERVICE         <- 'service' ![a-zA-Z0-9_] Spacing
+RAISES          <- 'raises'  ![a-zA-Z0-9_] Spacing
+OPTION          <- 'Option'  ![a-zA-Z0-9_] Spacing
+LIST            <- 'List'    ![a-zA-Z0-9_] Spacing
+MAP             <- 'Map'     ![a-zA-Z0-9_] Spacing
+
+STRING          <- 'string'  ![a-zA-Z0-9_] Spacing
+INT64           <- 'int64'   ![a-zA-Z0-9_] Spacing
+INT             <- 'int'     ![a-zA-Z0-9_] Spacing
+FLOAT           <- 'float'   ![a-zA-Z0-9_] Spacing
+BYTE            <- 'byte'    ![a-zA-Z0-9_] Spacing
+BOOL            <- 'bool'    ![a-zA-Z0-9_] Spacing
+BINARY          <- 'binary'  ![a-zA-Z0-9_] Spacing
+UUID_V7         <- 'uuid_v7' ![a-zA-Z0-9_] Spacing
+UUID            <- 'uuid'    ![a-zA-Z0-9_] Spacing
+VOID            <- 'void'    ![a-zA-Z0-9_] Spacing
+
+# ── Punctuation ──────────────────────────────────────────────────────
+
+LBRACE          <- '{' Spacing
+RBRACE          <- '}' Spacing
+LPAREN          <- '(' Spacing
+RPAREN          <- ')' Spacing
+LANGLE          <- '<' Spacing
+RANGLE          <- '>' Spacing
+SEMI            <- ';' Spacing
+COMMA           <- ',' Spacing
+STAR            <- '*' Spacing
+AT              <- '@' Spacing
+EQUAL           <- '=' Spacing
+PIPE            <- '|' Spacing
+QUESTION        <- '?' Spacing
+HASH            <- '#' Spacing
+
+# ── Spacing & comments ──────────────────────────────────────────────
+
+Spacing         <- ( Whitespace / LineComment )*
+
+Whitespace      <- [ \t\r\n]
+
+LineComment     <- '//' ( ![\r\n] . )* ( [\r\n] / EOF )
+
+EOF             <- !.

@@ -1,0 +1,3 @@
+(library
+ (name idlc)
+ (public_name idlc))

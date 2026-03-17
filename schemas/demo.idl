@@ -1,0 +1,49 @@
+#version("1.0")
+#target("typescript")
+
+struct Company {
+  string name;
+  string description?;
+}
+
+struct Job {
+  string title;
+  string description;
+  *Company company;
+}
+
+struct Photo {
+  string url;
+}
+
+struct Video {
+  string url;
+}
+
+struct Audio {
+  string url;
+}
+
+enum EmploymentType {
+  FULL_TIME;
+  CONTRACT;
+  TEMPORARY;
+}
+
+union MediaContent = Photo | Video | Audio;
+
+union SearchResult = *Company | *Job;
+
+@crud
+@rest(base="/api/v1/companies")
+service Company {
+
+  @context("hiring")
+  add(*Company company, Job job) *Job raises ValidationError;
+
+  remove(*Company company, *Job job) void raises NotFound, Unauthorized;
+
+  @paginate
+  listJobs(*Company company) List<*Job>;
+
+}
