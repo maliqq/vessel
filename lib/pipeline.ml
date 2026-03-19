@@ -31,8 +31,7 @@ let parse source =
 
 let expand ast =
   ast
-  |> Crud.expand
-  (* future: |> Paginate.expand *)
+  |> Extensions.apply
 
 (* ── Code generation ───────────────────────────────────────────────── *)
 
