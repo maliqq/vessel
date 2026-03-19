@@ -38,17 +38,33 @@ let extend ast =
 
 (* ── Resolve ───────────────────────────────────────────────────────── *)
 
-(* Filters annotation lists: keeps universal (no target)
-   plus annotations scoped to the given target name.
-   Strips the target field so generators see a clean list. *)
+(* Resolves annotations for a target:
+   1. Keep universal + matching target-scoped annotations
+   2. Target-scoped overrides universal of the same name (last wins)
+   3. Strip target field so generators see a clean list
+
+   Example: @some_fact(true) @some_fact:ts(false)
+   ts generator sees: @some_fact(false) — the scoped value overrides. *)
 
 let resolve_annotations target_name (anns : Ast.annotation list) =
-  anns
-  |> List.filter (fun (a : Ast.annotation) ->
-    match a.target with
-    | None -> true
-    | Some t -> t = target_name)
-  |> List.map (fun a -> { a with Ast.target = None })
+  let relevant =
+    anns
+    |> List.filter (fun (a : Ast.annotation) ->
+      match a.target with
+      | None -> true
+      | Some t -> t = target_name)
+  in
+  (* Last annotation of the same name wins.
+     Walk in order, accumulate into a name -> annotation map. *)
+  let seen = Hashtbl.create 8 in
+  let order = ref [] in
+  List.iter (fun (a : Ast.annotation) ->
+    if not (Hashtbl.mem seen a.name) then
+      order := a.name :: !order;
+    Hashtbl.replace seen a.name { a with Ast.target = None }
+  ) relevant;
+  List.rev !order
+  |> List.map (Hashtbl.find seen)
 
 let resolve_field target_name (f : Ast.field) =
   { f with annotations = resolve_annotations target_name f.annotations }
@@ -96,10 +112,23 @@ let targets : target list = [
   { name = "openapi";    path = "openapi/schema.yaml";    generate = Gen.Openapi.generate };
 ]
 
+(* ── Target filtering ──────────────────────────────────────────────── *)
+
+let select_targets = function
+  | None -> targets
+  | Some name ->
+    targets
+    |> List.filter (fun t -> t.name = name)
+
+let available_target_names () =
+  targets
+  |> List.map (fun t -> t.name)
+  |> List.sort_uniq String.compare
+
 (* ── Generate ──────────────────────────────────────────────────────── *)
 
-let generate extended_ast =
-  targets
+let generate selected_targets extended_ast =
+  selected_targets
   |> List.map (fun t ->
     let resolved_ast = extended_ast |> resolve t.name in
     { content = t.generate resolved_ast; relative_path = t.path })
@@ -115,9 +144,10 @@ let emit out_dir outputs =
 
 (* ── Full pipeline ─────────────────────────────────────────────────── *)
 
-let compile source out_dir =
+let compile ?target source out_dir =
+  let selected = select_targets target in
   source
   |> parse
   |> extend
-  |> generate
+  |> generate selected
   |> emit out_dir
