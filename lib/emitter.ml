@@ -2,6 +2,10 @@
    and ref-type scanning. Target-specific type mappings live in their
    respective gen/*.ml modules. *)
 
+(* ── Codegen marker ───────────────────────────────────────────────── *)
+
+let codegen_brand = "__T_CODEGEN_VESSEL"
+
 (* ── File IO ─────────────────────────────────────────────────────── *)
 
 let indent n s =

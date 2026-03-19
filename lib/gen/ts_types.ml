@@ -35,7 +35,7 @@ let rec lit_to_ts = function
 let emit_branded_ids line blank refs =
   List.iter (fun name ->
     let id = Emitter.ref_id name in
-    line (Printf.sprintf "export type %s = string & { readonly __brand: \"%s\" }" id id)
+    line (Printf.sprintf "export type %s = string & { readonly %s: \"%s\" }" id Emitter.codegen_brand id)
   ) refs;
   if refs <> [] then blank ()
 
