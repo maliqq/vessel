@@ -111,6 +111,7 @@ let targets : target list = [
   { name = "ts";         path = "typescript/schemas.ts";  generate = Gen.Ts_zod.generate };
   { name = "jsonschema"; path = "jsonschema/schema.json"; generate = Gen.Jsonschema.generate };
   { name = "openapi";    path = "openapi/schema.yaml";    generate = Gen.Openapi.generate };
+  { name = "rust";       path = "rust/types.rs";          generate = Gen.Rust.generate };
 ]
 
 (* ── Target filtering ──────────────────────────────────────────────── *)
