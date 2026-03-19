@@ -1,23 +1,15 @@
 (* Compilation pipeline — chains AST transforms and code generation.
 
-   The pipeline reads left-to-right:
-     source
-     |> parse
-     |> expand       (@crud, future: @paginate, etc.)
-     |> generate     (all targets at once)
-     |> emit         (write to disk)
+   source
+   |> parse
+   |> extend      (AST visitors: @crud, @paginate, etc.)
+   |> generate    (all output targets)
+   |> emit        (write to disk)
 *)
 
 (* ── Types ─────────────────────────────────────────────────────────── *)
 
-type target =
-  | Typescript_types
-  | Typescript_zod
-  | Json_schema
-  | Openapi
-
 type output = {
-  target : target;
   content : string;
   relative_path : string;
 }
@@ -25,27 +17,30 @@ type output = {
 (* ── Parse ─────────────────────────────────────────────────────────── *)
 
 let parse source =
-  Parser.parse_file source
+  source |> Parser.parse_file
 
-(* ── AST transforms ────────────────────────────────────────────────── *)
+(* ── Extend ────────────────────────────────────────────────────────── *)
 
-let expand ast =
-  ast
-  |> Extensions.apply
+let extensions = [
+  Ext.Crud.apply;
+  (* future: Ext.Paginate.apply; *)
+]
 
-(* ── Code generation ───────────────────────────────────────────────── *)
+let extend ast =
+  extensions |> List.fold_left (fun acc ext -> ext acc) ast
 
-let generators : (target * string * (Ast.file -> string)) list = [
-  (Typescript_types, "typescript/types.ts",       Gen_ts_types.generate);
-  (Typescript_zod,   "typescript/schemas.ts",     Gen_ts_zod.generate);
-  (Json_schema,      "jsonschema/schema.json",    Gen_jsonschema.generate);
-  (Openapi,          "openapi/schema.yaml",       Gen_openapi.generate);
+(* ── Generate ──────────────────────────────────────────────────────── *)
+
+let targets : (string * (Ast.file -> string)) list = [
+  ("typescript/types.ts",    Gen.Ts_types.generate);
+  ("typescript/schemas.ts",  Gen.Ts_zod.generate);
+  ("jsonschema/schema.json", Gen.Jsonschema.generate);
+  ("openapi/schema.yaml",   Gen.Openapi.generate);
 ]
 
 let generate ast =
-  generators
-  |> List.map (fun (target, path, gen) ->
-    { target; content = gen ast; relative_path = path })
+  targets
+  |> List.map (fun (path, gen) -> { content = gen ast; relative_path = path })
 
 (* ── Emit ──────────────────────────────────────────────────────────── *)
 
@@ -61,6 +56,6 @@ let emit out_dir outputs =
 let compile source out_dir =
   source
   |> parse
-  |> expand
+  |> extend
   |> generate
   |> emit out_dir
