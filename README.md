@@ -1,14 +1,51 @@
 # Vessel
 
-A strict, contract-first IDL compiler. OCaml parser, TypeScript/Bun code generator.
+Define your shapes once. Generate the glue. Write the real logic by hand.
 
-Write a small schema, generate boring scaffolding, handwrite the logic that matters.
+Vessel is a strict, contract-first IDL toolchain written in OCaml. It parses a small DSL into a typed AST, applies annotation-driven transforms, and generates deterministic code for target surfaces such as TypeScript, JSON Schema, and OpenAPI.
+
+The generated code is not the product. The generated code is the shell:
+
+- request and response shaping
+- validation wiring
+- transport boilerplate
+- dispatch glue
+- typed adapters around handwritten entrypoints
+
+Generated files should be disposable and never edited by hand.
+
+## Why
+
+Most service code is boring glue:
+
+- HTTP bindings
+- CLI argument extraction
+- schema wiring
+- repetitive handler surfaces
+- type marker plumbing
+
+Vessel exists to generate that strict, repetitive layer so the handwritten code can stay focused on actual behavior.
+
+## Mental Model
+
+One file defines:
+
+- shared domain shapes at file scope
+- one or more `service` surfaces over those shapes
+
+A `service` is an operation surface, not just a REST controller. In real projects that can mean:
+
+- `service Api`
+- `service SolanaSmartContracts`
+- `service Engine`
+- `service CLI`
+
+The same shapes can be projected into different generated glue depending on annotations and target.
 
 ## Example
 
-```
+```idl
 #version("1.0")
-#target("typescript")
 
 struct Company {
   string name;
@@ -40,7 +77,59 @@ service Company {
 }
 ```
 
-## Types
+## Syntax Snapshot
+
+Structs:
+
+```idl
+struct Profile {
+  string name;
+  string phone?;
+  Option<string> bio;
+}
+```
+
+Enums:
+
+```idl
+enum Status {
+  ACTIVE;
+  INACTIVE;
+}
+```
+
+Unions:
+
+```idl
+union Result = Success | Error;
+```
+
+Services:
+
+```idl
+service Users {
+  get(*User id) User raises NotFound;
+  list() List<User>;
+}
+```
+
+References:
+
+```idl
+*Company
+```
+
+`*Type` is a typed handle or ID, not an embedded value.
+
+Annotations:
+
+```idl
+@crud
+@rest(base="/api/v1")
+@validate(min=1, max=100, required=true)
+```
+
+## Type Mapping
 
 | IDL | TypeScript | Rust |
 |---|---|---|
@@ -51,87 +140,84 @@ service Company {
 | `byte` | `number` | `u8` |
 | `bool` | `boolean` | `bool` |
 | `binary` | `Uint8Array` | `Vec<u8>` |
-| `uuid` | `string` (branded) | `Uuid` |
-| `uuid_v7` | `string` (branded) | `Uuid` |
+| `uuid` | `string` | `Uuid` |
+| `uuid_v7` | `string` | `Uuid` |
 | `void` | `void` | `()` |
 | `List<T>` | `T[]` | `Vec<T>` |
 | `Map<K, V>` | `Record<K, V>` | `HashMap<K, V>` |
 | `Option<T>` | `T \| undefined` | `Option<T>` |
-| `*Type` | `TypeId` (branded string) | `TypeId` |
+| `*Type` | `TypeId` | `TypeId` |
 
-## Syntax at a glance
+Generated type markers use Vessel-specific machine metadata such as `__T_CODEGEN_VESSEL`.
 
-**Struct** — fields with types, `?` marks optional:
-```
-struct Profile {
-  string name;
-  string phone?;       // sugar for Option<string>
-  Option<string> bio;  // explicit form
-}
-```
+## What Exists Today
 
-**Enum** — closed set, SCREAMING_CASE members:
-```
-enum Status { ACTIVE; INACTIVE; }
-```
+Current pipeline:
 
-**Union** — sum type, maps to TS union:
-```
-union Result = Success | Error;
-```
+`DSL -> AST -> AST transforms -> validation -> target resolution -> codegen`
 
-**Service** — methods with optional `raises`:
-```
-service Users {
-  get(*User id) User raises NotFound;
-  list() List<User>;
-}
-```
+Current outputs:
 
-**References** — `*Type` is a typed handle (UUID/ID), not a value:
-```
-*Company  // reference to a Company, not an embedded Company
-```
+- TypeScript types
+- Zod schemas
+- JSON Schema
+- OpenAPI
 
-**Map keys** — must be primitive or `*Ref`:
-```
-Map<string, int>       // ok
-Map<*Profile, Dialog>  // ok (keyed by reference/ID)
-Map<Profile, string>   // error
-```
+Current extension pass:
 
-**Directives** — file-level metadata with `#`, before any declarations:
-```
-#version("1.0")
-#target("typescript")
-#config(debug=true, timeout=30)
-```
+- `@crud`
 
-**Annotations** — declaration-level metadata with `@`:
-```
-@crud                                    // bare
-@rest(base="/api/v1")                        // single value
-@validate(min=1, max=100, required=true) // named key=value pairs
-```
-
-## Build
+## CLI
 
 Requires OCaml 5+ and dune 3+.
 
-```
+Build:
+
+```sh
 dune build
-dune exec idlc -- schemas/demo.idl
+```
+
+Compile a schema:
+
+```sh
+dune exec idlc -- compile schemas/demo.idl
+```
+
+Choose an output directory:
+
+```sh
+dune exec idlc -- compile schemas/demo.idl --out ./build
+```
+
+Choose a target:
+
+```sh
+dune exec idlc -- compile schemas/demo.idl --target ts
+```
+
+Print the parsed AST back into normalized syntax:
+
+```sh
+dune exec idlc -- print schemas/demo.idl
+```
+
+Run tests:
+
+```sh
 dune runtest
 ```
 
-## Project layout
+## Repo Layout
 
-```
-idl.peg          PEG grammar spec
-lib/ast.ml       AST types
-lib/parser.ml    recursive-descent parser
-lib/printer.ml   AST pretty-printer
-bin/main.ml      CLI entry point
-test/            parser tests
-schemas/         example .idl files
+```text
+idl.peg             PEG grammar reference
+lib/ast.ml          AST types
+lib/parser.ml       hand-written recursive-descent parser
+lib/ext/            AST extension passes
+lib/validate.ml     semantic validation
+lib/gen/            target generators
+lib/pipeline.ml     end-to-end compilation pipeline
+bin/main.ml         CLI
+schemas/            example schemas
+test/               tests
 ```
