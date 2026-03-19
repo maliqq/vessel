@@ -2,4 +2,5 @@
 
 (library
  (name idlc)
- (public_name idlc))
+ (public_name idlc)
+ (libraries yojson yaml))

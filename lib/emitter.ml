@@ -93,24 +93,56 @@ let rec zod_type = function
   | Ast.Set t -> "z.set(" ^ zod_type t ^ ")"
   | Ast.Map (_, v) -> "z.record(z.string(), " ^ zod_type v ^ ")"
 
-let rec json_schema_type = function
-  | Ast.Prim Ast.String -> "{ \"type\": \"string\" }"
-  | Ast.Prim Ast.Int -> "{ \"type\": \"integer\" }"
-  | Ast.Prim Ast.Int64 -> "{ \"type\": \"integer\", \"format\": \"int64\" }"
-  | Ast.Prim Ast.Float -> "{ \"type\": \"number\" }"
-  | Ast.Prim Ast.Byte -> "{ \"type\": \"integer\", \"minimum\": 0, \"maximum\": 255 }"
-  | Ast.Prim Ast.Bool -> "{ \"type\": \"boolean\" }"
-  | Ast.Prim Ast.Binary -> "{ \"type\": \"string\", \"contentEncoding\": \"base64\" }"
-  | Ast.Prim Ast.Uuid -> "{ \"type\": \"string\", \"format\": \"uuid\" }"
-  | Ast.Prim Ast.Uuid_v7 -> "{ \"type\": \"string\", \"format\": \"uuid\" }"
-  | Ast.Prim Ast.Void -> "{ }"
-  | Ast.Named n -> "{ \"$ref\": \"#/$defs/" ^ n ^ "\" }"
-  | Ast.Ref n -> "{ \"type\": \"string\", \"description\": \"" ^ ref_id n ^ "\" }"
-  | Ast.Option t -> json_schema_type t
-  | Ast.Tuple ts ->
-    "{ \"type\": \"array\", \"prefixItems\": [" ^
-    String.concat ", " (List.map json_schema_type ts) ^
-    "], \"items\": false }"
-  | Ast.List t -> "{ \"type\": \"array\", \"items\": " ^ json_schema_type t ^ " }"
-  | Ast.Set t -> "{ \"type\": \"array\", \"items\": " ^ json_schema_type t ^ ", \"uniqueItems\": true }"
-  | Ast.Map (_, v) -> "{ \"type\": \"object\", \"additionalProperties\": " ^ json_schema_type v ^ " }"
+(* ── JSON Schema type mapping (returns Yojson tree) ─────────────────── *)
+
+let obj pairs : Yojson.Basic.t = `Assoc pairs
+
+let rec json_of_type : Ast.typ -> Yojson.Basic.t = function
+  | Ast.Prim Ast.String  -> obj ["type", `String "string"]
+  | Ast.Prim Ast.Int     -> obj ["type", `String "integer"]
+  | Ast.Prim Ast.Int64   -> obj ["type", `String "integer"; "format", `String "int64"]
+  | Ast.Prim Ast.Float   -> obj ["type", `String "number"]
+  | Ast.Prim Ast.Byte    -> obj ["type", `String "integer"; "minimum", `Int 0; "maximum", `Int 255]
+  | Ast.Prim Ast.Bool    -> obj ["type", `String "boolean"]
+  | Ast.Prim Ast.Binary  -> obj ["type", `String "string"; "contentEncoding", `String "base64"]
+  | Ast.Prim Ast.Uuid    -> obj ["type", `String "string"; "format", `String "uuid"]
+  | Ast.Prim Ast.Uuid_v7 -> obj ["type", `String "string"; "format", `String "uuid"]
+  | Ast.Prim Ast.Void    -> obj []
+  | Ast.Named n          -> obj ["$ref", `String ("#/$defs/" ^ n)]
+  | Ast.Ref n            -> obj ["type", `String "string"; "description", `String (ref_id n)]
+  | Ast.Option t         -> json_of_type t
+  | Ast.Tuple ts         -> obj ["type", `String "array";
+                                 "prefixItems", `List (List.map json_of_type ts);
+                                 "items", `Bool false]
+  | Ast.List t           -> obj ["type", `String "array"; "items", json_of_type t]
+  | Ast.Set t            -> obj ["type", `String "array"; "items", json_of_type t;
+                                 "uniqueItems", `Bool true]
+  | Ast.Map (_, v)       -> obj ["type", `String "object";
+                                 "additionalProperties", json_of_type v]
+
+(* ── YAML type mapping (returns Yaml.value tree) ───────────────────── *)
+
+let yobj pairs : Yaml.value = `O pairs
+let ystr s : Yaml.value = `String s
+
+let rec yaml_of_type : Ast.typ -> Yaml.value = function
+  | Ast.Prim Ast.String  -> yobj ["type", ystr "string"]
+  | Ast.Prim Ast.Int     -> yobj ["type", ystr "integer"]
+  | Ast.Prim Ast.Int64   -> yobj ["type", ystr "integer"; "format", ystr "int64"]
+  | Ast.Prim Ast.Float   -> yobj ["type", ystr "number"]
+  | Ast.Prim Ast.Byte    -> yobj ["type", ystr "integer";
+                                  "minimum", `Float 0.0; "maximum", `Float 255.0]
+  | Ast.Prim Ast.Bool    -> yobj ["type", ystr "boolean"]
+  | Ast.Prim Ast.Binary  -> yobj ["type", ystr "string"; "contentEncoding", ystr "base64"]
+  | Ast.Prim Ast.Uuid    -> yobj ["type", ystr "string"; "format", ystr "uuid"]
+  | Ast.Prim Ast.Uuid_v7 -> yobj ["type", ystr "string"; "format", ystr "uuid"]
+  | Ast.Prim Ast.Void    -> yobj ["type", ystr "object"]
+  | Ast.Named n          -> yobj ["$ref", ystr ("#/components/schemas/" ^ n)]
+  | Ast.Ref n            -> yobj ["$ref", ystr ("#/components/schemas/" ^ ref_id n)]
+  | Ast.Option t         -> yaml_of_type t
+  | Ast.List t           -> yobj ["type", ystr "array"; "items", yaml_of_type t]
+  | Ast.Set t            -> yobj ["type", ystr "array"; "uniqueItems", `Bool true;
+                                  "items", yaml_of_type t]
+  | Ast.Tuple _          -> yobj ["type", ystr "array"]
+  | Ast.Map (_, v)       -> yobj ["type", ystr "object";
+                                  "additionalProperties", yaml_of_type v]

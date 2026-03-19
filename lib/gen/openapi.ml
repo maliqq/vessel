@@ -1,41 +1,9 @@
-(* Generate OpenAPI 3.1 YAML *)
+(* Generate OpenAPI 3.1 YAML using the yaml library *)
 
-(* ── YAML helpers ──────────────────────────────────────────────────── *)
-
-let yi n s = String.make (n * 2) ' ' ^ s
-
-let rec yaml_schema indent_n = function
-  | Ast.Prim Ast.String -> [yi indent_n "type: string"]
-  | Ast.Prim Ast.Int -> [yi indent_n "type: integer"]
-  | Ast.Prim Ast.Int64 -> [yi indent_n "type: integer"; yi indent_n "format: int64"]
-  | Ast.Prim Ast.Float -> [yi indent_n "type: number"]
-  | Ast.Prim Ast.Byte -> [yi indent_n "type: integer"; yi indent_n "minimum: 0"; yi indent_n "maximum: 255"]
-  | Ast.Prim Ast.Bool -> [yi indent_n "type: boolean"]
-  | Ast.Prim Ast.Binary -> [yi indent_n "type: string"; yi indent_n "contentEncoding: base64"]
-  | Ast.Prim Ast.Uuid -> [yi indent_n "type: string"; yi indent_n "format: uuid"]
-  | Ast.Prim Ast.Uuid_v7 -> [yi indent_n "type: string"; yi indent_n "format: uuid"]
-  | Ast.Prim Ast.Void -> [yi indent_n "type: object"]
-  | Ast.Named n -> [yi indent_n ("$ref: '#/components/schemas/" ^ n ^ "'")]
-  | Ast.Ref n -> [yi indent_n ("$ref: '#/components/schemas/" ^ Emitter.ref_id n ^ "'")]
-  | Ast.Option t -> yaml_schema indent_n t
-  | Ast.List t ->
-    [yi indent_n "type: array"; yi indent_n "items:"] @ yaml_schema (indent_n + 1) t
-  | Ast.Set t ->
-    [yi indent_n "type: array"; yi indent_n "uniqueItems: true"; yi indent_n "items:"]
-    @ yaml_schema (indent_n + 1) t
-  | Ast.Tuple _ -> [yi indent_n "type: array"]
-  | Ast.Map (_, v) ->
-    [yi indent_n "type: object"; yi indent_n "additionalProperties:"]
-    @ yaml_schema (indent_n + 1) v
-
-(* ── Route types ───────────────────────────────────────────────────── *)
-
-type route_op = {
-  http_method : string;
-  operation_id : string;
-  summary : string;
-  method_decl : Ast.method_decl;
-}
+let ystr s : Yaml.value = `String s
+let yobj pairs : Yaml.value = `O pairs
+let ylist items : Yaml.value = `A items
+let ybool b : Yaml.value = `Bool b
 
 (* ── Route resolution ──────────────────────────────────────────────── *)
 
@@ -54,23 +22,109 @@ let resolve_base_path ~name ~annotations =
 let method_to_route base (m : Ast.method_decl) =
   match m.name with
   | "create" -> ("post", base)
-  | "list" -> ("get", base)
-  | "get" -> ("get", base ^ "/{id}")
+  | "list"   -> ("get", base)
+  | "get"    -> ("get", base ^ "/{id}")
   | "update" -> ("put", base ^ "/{id}")
   | "delete" -> ("delete", base ^ "/{id}")
-  | name -> ("post", base ^ "/" ^ name)
+  | name     -> ("post", base ^ "/" ^ name)
+
+(* ── Param classification ──────────────────────────────────────────── *)
+
+let is_ref_param (p : Ast.param) =
+  match p.typ with Ast.Ref _ -> true | _ -> false
+
+let partition_params params =
+  let path_params = List.filter is_ref_param params in
+  let body_params = List.filter (fun p -> not (is_ref_param p)) params in
+  (path_params, body_params)
+
+(* ── Operation builder ─────────────────────────────────────────────── *)
+
+let build_path_param (p : Ast.param) : Yaml.value =
+  yobj [
+    "name", ystr p.name;
+    "in", ystr "path";
+    "required", ybool true;
+    "schema", Emitter.yaml_of_type p.typ;
+  ]
+
+let build_request_body (params : Ast.param list) : Yaml.value =
+  let properties = List.map (fun (p : Ast.param) ->
+    (p.name, Emitter.yaml_of_type p.typ)
+  ) params in
+  yobj [
+    "required", ybool true;
+    "content", yobj [
+      "application/json", yobj [
+        "schema", yobj [
+          "type", ystr "object";
+          "properties", yobj properties;
+        ]
+      ]
+    ]
+  ]
+
+let build_response (return_type : Ast.typ) (raises : string list) : Yaml.value =
+  let success_response = match return_type with
+    | Ast.Prim Ast.Void ->
+      yobj ["description", ystr "Success"]
+    | rt ->
+      yobj [
+        "description", ystr "Success";
+        "content", yobj [
+          "application/json", yobj [
+            "schema", Emitter.yaml_of_type rt;
+          ]
+        ]
+      ]
+  in
+  let base = ["200", success_response] in
+  let with_errors = match raises with
+    | [] -> base
+    | rs -> base @ ["400", yobj ["description", ystr (String.concat " | " rs)]]
+  in
+  yobj with_errors
+
+let build_operation ~service_name (m : Ast.method_decl) : Yaml.value =
+  let (path_params, body_params) = partition_params m.params in
+
+  let base = [
+    "operationId", ystr (service_name ^ "_" ^ m.name);
+    "summary", ystr (service_name ^ "." ^ m.name);
+  ] in
+
+  let with_params = match path_params with
+    | [] -> base
+    | ps -> base @ ["parameters", ylist (List.map build_path_param ps)]
+  in
+
+  let with_body = match body_params with
+    | [] -> with_params
+    | ps -> with_params @ ["requestBody", build_request_body ps]
+  in
+
+  let with_responses =
+    with_body @ ["responses", build_response m.return_type m.raises]
+  in
+
+  yobj with_responses
 
 (* ── Path collection ───────────────────────────────────────────────── *)
 
-let collect_paths (file : Ast.file) =
-  let paths : (string, route_op list) Hashtbl.t = Hashtbl.create 32 in
+type route = {
+  http_method : string;
+  operation : Yaml.value;
+}
+
+let collect_paths (file : Ast.file) : (string * route list) list =
+  let paths : (string, route list) Hashtbl.t = Hashtbl.create 32 in
   let path_order = ref [] in
 
-  let add_path path op =
+  let add_path path route =
     if not (Hashtbl.mem paths path) then
       path_order := path :: !path_order;
     let existing = try Hashtbl.find paths path with Not_found -> [] in
-    Hashtbl.replace paths path (existing @ [op])
+    Hashtbl.replace paths path (existing @ [route])
   in
 
   List.iter (function
@@ -78,169 +132,84 @@ let collect_paths (file : Ast.file) =
       let base = resolve_base_path ~name:s.name ~annotations:s.annotations in
       List.iter (fun (m : Ast.method_decl) ->
         let (http_method, path) = method_to_route base m in
-        add_path path {
-          http_method;
-          operation_id = s.name ^ "_" ^ m.name;
-          summary = s.name ^ "." ^ m.name;
-          method_decl = m;
-        }
+        let operation = build_operation ~service_name:s.name m in
+        add_path path { http_method; operation }
       ) s.methods
     | _ -> ()
   ) file.declarations;
 
-  (List.rev !path_order, paths)
-
-(* ── Operation emitter ─────────────────────────────────────────────── *)
-
-let is_ref_param (p : Ast.param) =
-  match p.typ with Ast.Ref _ -> true | _ -> false
-
-let emit_operation line lines (op : route_op) =
-  let m = op.method_decl in
-
-  line (Printf.sprintf "    %s:" op.http_method);
-  line (Printf.sprintf "      operationId: %s" op.operation_id);
-  line (Printf.sprintf "      summary: %s" op.summary);
-
-  if m.params <> [] then begin
-    let id_params = List.filter is_ref_param m.params in
-    let body_params = List.filter (fun p -> not (is_ref_param p)) m.params in
-
-    (* Path parameters *)
-    if id_params <> [] then begin
-      line "      parameters:";
-      List.iter (fun (p : Ast.param) ->
-        line (Printf.sprintf "        - name: %s" p.name);
-        line "          in: path";
-        line "          required: true";
-        line "          schema:";
-        lines (yaml_schema 6 p.typ)
-      ) id_params
-    end;
-
-    (* Request body *)
-    if body_params <> [] then begin
-      line "      requestBody:";
-      line "        required: true";
-      line "        content:";
-      line "          application/json:";
-      line "            schema:";
-      line "              type: object";
-      line "              properties:";
-      List.iter (fun (p : Ast.param) ->
-        line (Printf.sprintf "                %s:" p.name);
-        lines (yaml_schema 9 p.typ)
-      ) body_params
-    end
-  end;
-
-  (* Response *)
-  line "      responses:";
-  line "        '200':";
-  line "          description: Success";
-  (match m.return_type with
-   | Ast.Prim Ast.Void -> ()
-   | rt ->
-     line "          content:";
-     line "            application/json:";
-     line "              schema:";
-     lines (yaml_schema 8 rt));
-
-  if m.raises <> [] then begin
-    line "        '400':";
-    line (Printf.sprintf "          description: %s" (String.concat " | " m.raises))
-  end
+  List.rev !path_order
+  |> List.map (fun path -> (path, Hashtbl.find paths path))
 
 (* ── Paths section ─────────────────────────────────────────────────── *)
 
-let emit_paths line lines (ordered_paths, paths) =
-  if ordered_paths <> [] then begin
-    line "paths:";
-    List.iter (fun path ->
-      line (Printf.sprintf "  %s:" path);
-      let ops = Hashtbl.find paths path in
-      List.iter (emit_operation line lines) ops
-    ) ordered_paths
-  end
+let build_paths (file : Ast.file) : (string * Yaml.value) list =
+  let grouped = collect_paths file in
+  match grouped with
+  | [] -> []
+  | _ ->
+    let path_entries = List.map (fun (path, routes) ->
+      let methods = List.map (fun r -> (r.http_method, r.operation)) routes in
+      (path, yobj methods)
+    ) grouped in
+    ["paths", yobj path_entries]
 
 (* ── Components section ────────────────────────────────────────────── *)
 
-let emit_components line lines (file : Ast.file) =
+let build_schema_component = function
+  | Ast.Struct s ->
+    let properties = List.map (fun (f : Ast.field) ->
+      (f.name, Emitter.yaml_of_type f.typ)
+    ) s.fields in
+    let required = List.filter_map (fun (f : Ast.field) ->
+      if not f.optional then Some (ystr f.name) else None
+    ) s.fields in
+    let base = ["type", ystr "object"; "properties", yobj properties] in
+    let with_required = match required with
+      | [] -> base
+      | rs -> base @ ["required", ylist rs]
+    in
+    Some (s.name, yobj with_required)
+
+  | Ast.Enum e ->
+    let members = List.map (fun (m : Ast.enum_member) -> ystr m.name) e.members in
+    Some (e.name, yobj ["type", ystr "string"; "enum", ylist members])
+
+  | Ast.Union u ->
+    let variants = List.map Emitter.yaml_of_type u.variants in
+    Some (u.name, yobj ["oneOf", ylist variants])
+
+  | _ -> None
+
+let build_components (file : Ast.file) : (string * Yaml.value) list =
   let refs = Emitter.collect_ref_types file in
-  let has_schemas = refs <> [] || List.exists (function
-    | Ast.Struct _ | Ast.Enum _ | Ast.Union _ -> true | _ -> false
-  ) file.declarations in
+  let id_schemas = List.map (fun name ->
+    let id = Emitter.ref_id name in
+    (id, yobj [
+      "type", ystr "string";
+      "description", ystr ("Branded ID for " ^ name);
+    ])
+  ) refs in
 
-  if not has_schemas then ()
-  else begin
-    line "components:";
-    line "  schemas:";
+  let decl_schemas = List.filter_map build_schema_component file.declarations in
+  let all_schemas = id_schemas @ decl_schemas in
 
-    (* Branded IDs *)
-    List.iter (fun name ->
-      let id = Emitter.ref_id name in
-      line (Printf.sprintf "    %s:" id);
-      line "      type: string";
-      line (Printf.sprintf "      description: Branded ID for %s" name)
-    ) refs;
-
-    (* Structs *)
-    List.iter (function
-      | Ast.Struct s ->
-        line (Printf.sprintf "    %s:" s.name);
-        line "      type: object";
-        line "      properties:";
-        List.iter (fun (f : Ast.field) ->
-          line (Printf.sprintf "        %s:" f.name);
-          lines (yaml_schema 5 f.typ)
-        ) s.fields;
-        let required = List.filter_map (fun (f : Ast.field) ->
-          if not f.optional then Some f.name else None
-        ) s.fields in
-        if required <> [] then begin
-          line "      required:";
-          List.iter (fun r -> line (Printf.sprintf "        - %s" r)) required
-        end
-      | _ -> ()
-    ) file.declarations;
-
-    (* Enums *)
-    List.iter (function
-      | Ast.Enum e ->
-        line (Printf.sprintf "    %s:" e.name);
-        line "      type: string";
-        line "      enum:";
-        List.iter (fun (m : Ast.enum_member) ->
-          line (Printf.sprintf "        - %s" m.name)
-        ) e.members
-      | _ -> ()
-    ) file.declarations;
-
-    (* Unions *)
-    List.iter (function
-      | Ast.Union u ->
-        line (Printf.sprintf "    %s:" u.name);
-        line "      oneOf:";
-        List.iter (fun t ->
-          line (Printf.sprintf "        - %s" (String.concat "\n" (yaml_schema 0 t)))
-        ) u.variants
-      | _ -> ()
-    ) file.declarations
-  end
+  match all_schemas with
+  | [] -> []
+  | _ -> ["components", yobj ["schemas", yobj all_schemas]]
 
 (* ── Main entry point ──────────────────────────────────────────────── *)
 
 let generate (file : Ast.file) : string =
-  let buf = Buffer.create 8192 in
-  let line s = Buffer.add_string buf s; Buffer.add_char buf '\n' in
-  let lines ls = List.iter line ls in
-
-  line "openapi: '3.1.0'";
-  line "info:";
-  line "  title: Generated API";
-  line "  version: '1.0.0'";
-
-  file |> collect_paths |> emit_paths line lines;
-  emit_components line lines file;
-
-  Buffer.contents buf
+  let doc = yobj (
+    [
+      "openapi", ystr "3.1.0";
+      "info", yobj [
+        "title", ystr "Generated API";
+        "version", ystr "1.0.0";
+      ];
+    ]
+    @ build_paths file
+    @ build_components file
+  ) in
+  Yaml.to_string_exn doc

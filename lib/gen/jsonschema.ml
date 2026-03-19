@@ -1,75 +1,71 @@
-(* Generate JSON Schema (Draft 2020-12) *)
+(* Generate JSON Schema (Draft 2020-12) using Yojson *)
 
-(* ── JSON helpers ──────────────────────────────────────────────────── *)
+module J = Yojson.Basic
 
-let json_escape s =
-  let buf = Buffer.create (String.length s) in
-  String.iter (fun c -> match c with
-    | '"' -> Buffer.add_string buf "\\\""
-    | '\\' -> Buffer.add_string buf "\\\\"
-    | '\n' -> Buffer.add_string buf "\\n"
-    | _ -> Buffer.add_char buf c
-  ) s;
-  Buffer.contents buf
+(* ── Literal → JSON ───────────────────────────────────────────────── *)
 
-let rec literal_to_json = function
-  | Ast.Lit_string s -> "\"" ^ json_escape s ^ "\""
-  | Ast.Lit_int i -> string_of_int i
-  | Ast.Lit_float f -> string_of_float f
-  | Ast.Lit_bool b -> string_of_bool b
-  | Ast.Lit_array xs -> "[" ^ String.concat ", " (List.map literal_to_json xs) ^ "]"
+let rec literal_to_json : Ast.literal -> J.t = function
+  | Ast.Lit_string s -> `String s
+  | Ast.Lit_int i    -> `Int i
+  | Ast.Lit_float f  -> `Float f
+  | Ast.Lit_bool b   -> `Bool b
+  | Ast.Lit_array xs -> `List (List.map literal_to_json xs)
 
 (* ── Definition builders ───────────────────────────────────────────── *)
 
-let def_branded_id name =
+let def_branded_id name : string * J.t =
   let id = Emitter.ref_id name in
-  Printf.sprintf "    \"%s\": { \"type\": \"string\", \"description\": \"Branded ID for %s\" }"
-    id name
+  (id, `Assoc [
+    "type", `String "string";
+    "description", `String ("Branded ID for " ^ name);
+  ])
 
-let def_struct ~name ~fields =
-  let props = List.map (fun (f : Ast.field) ->
-    Printf.sprintf "        \"%s\": %s" f.name (Emitter.json_schema_type f.typ)
+let def_struct ~name ~(fields : Ast.field list) : string * J.t =
+  let properties = List.map (fun (f : Ast.field) ->
+    (f.name, Emitter.json_of_type f.typ)
   ) fields in
 
   let required = List.filter_map (fun (f : Ast.field) ->
-    if not f.optional then Some (Printf.sprintf "\"%s\"" f.name) else None
+    if not f.optional then Some (`String f.name) else None
   ) fields in
 
-  let req_str = match required with
-    | [] -> ""
-    | rs -> Printf.sprintf ",\n        \"required\": [%s]" (String.concat ", " rs)
+  let base = [
+    "type", `String "object";
+    "properties", `Assoc properties;
+  ] in
+
+  let with_required = match required with
+    | [] -> base
+    | rs -> base @ ["required", `List rs]
   in
 
-  Printf.sprintf "    \"%s\": {\n      \"type\": \"object\",\n      \"properties\": {\n%s\n      }%s\n    }"
-    name (String.concat ",\n" props) req_str
+  (name, `Assoc with_required)
 
-let def_enum ~name ~members =
-  let member_strs = List.map (fun (m : Ast.enum_member) ->
-    "\"" ^ m.name ^ "\""
-  ) members in
-  Printf.sprintf "    \"%s\": { \"type\": \"string\", \"enum\": [%s] }"
-    name (String.concat ", " member_strs)
+let def_enum ~name ~(members : Ast.enum_member list) : string * J.t =
+  let values = List.map (fun (m : Ast.enum_member) -> `String m.name) members in
+  (name, `Assoc [
+    "type", `String "string";
+    "enum", `List values;
+  ])
 
-let def_union ~name ~variants =
-  let variant_strs = List.map Emitter.json_schema_type variants in
-  Printf.sprintf "    \"%s\": { \"oneOf\": [%s] }"
-    name (String.concat ", " variant_strs)
+let def_union ~name ~(variants : Ast.typ list) : string * J.t =
+  let schemas = List.map Emitter.json_of_type variants in
+  (name, `Assoc ["oneOf", `List schemas])
 
-let def_const ~name ~value =
-  Printf.sprintf "    \"%s\": { \"const\": %s }"
-    name (literal_to_json value)
+let def_const ~name ~value : string * J.t =
+  (name, `Assoc ["const", literal_to_json value])
 
 (* ── Collect all definitions ───────────────────────────────────────── *)
 
-let collect_defs (file : Ast.file) : string list =
+let collect_defs (file : Ast.file) : (string * J.t) list =
   let refs = Emitter.collect_ref_types file in
   let id_defs = List.map def_branded_id refs in
 
   let decl_defs = List.filter_map (function
-    | Ast.Struct s -> Some (def_struct ~name:s.name ~fields:s.fields)
-    | Ast.Enum e -> Some (def_enum ~name:e.name ~members:e.members)
-    | Ast.Union u -> Some (def_union ~name:u.name ~variants:u.variants)
-    | Ast.Const c -> Some (def_const ~name:c.name ~value:c.value)
+    | Ast.Struct s  -> Some (def_struct ~name:s.name ~fields:s.fields)
+    | Ast.Enum e    -> Some (def_enum ~name:e.name ~members:e.members)
+    | Ast.Union u   -> Some (def_union ~name:u.name ~variants:u.variants)
+    | Ast.Const c   -> Some (def_const ~name:c.name ~value:c.value)
     | Ast.Service _ -> None
   ) file.declarations in
 
@@ -78,17 +74,8 @@ let collect_defs (file : Ast.file) : string list =
 (* ── Main entry point ──────────────────────────────────────────────── *)
 
 let generate (file : Ast.file) : string =
-  let buf = Buffer.create 4096 in
-  let line s = Buffer.add_string buf s; Buffer.add_char buf '\n' in
-
-  line "{";
-  line "  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",";
-  line "  \"$defs\": {";
-
-  let all_defs = collect_defs file in
-  line (String.concat ",\n" all_defs);
-
-  line "  }";
-  line "}";
-
-  Buffer.contents buf
+  let schema : J.t = `Assoc [
+    "$schema", `String "https://json-schema.org/draft/2020-12/schema";
+    "$defs", `Assoc (collect_defs file);
+  ] in
+  J.pretty_to_string ~std:true schema ^ "\n"
