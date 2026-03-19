@@ -2,7 +2,7 @@
 
 Define your shapes once. Generate the glue. Write the real logic by hand.
 
-Vessel is a strict, contract-first IDL toolchain written in OCaml. It parses a small DSL into a typed AST, applies annotation-driven transforms, and generates deterministic code for target surfaces such as TypeScript, JSON Schema, and OpenAPI.
+Vessel is a strict, contract-first IDL toolchain written in OCaml. It parses a small DSL into a typed AST, applies annotation-driven transforms, and generates deterministic code for target surfaces such as TypeScript, Rust, JSON Schema, and OpenAPI.
 
 The generated code is not the product. The generated code is the shell:
 
@@ -140,8 +140,8 @@ Annotations:
 | `byte` | `number` | `u8` |
 | `bool` | `boolean` | `bool` |
 | `binary` | `Uint8Array` | `Vec<u8>` |
-| `uuid` | `string` | `Uuid` |
-| `uuid_v7` | `string` | `Uuid` |
+| `uuid` | `string` | `String` |
+| `uuid_v7` | `string` | `String` |
 | `void` | `void` | `()` |
 | `List<T>` | `T[]` | `Vec<T>` |
 | `Map<K, V>` | `Record<K, V>` | `HashMap<K, V>` |
@@ -159,6 +159,7 @@ Current pipeline:
 Current outputs:
 
 - TypeScript types
+- Rust types
 - Zod schemas
 - JSON Schema
 - OpenAPI
