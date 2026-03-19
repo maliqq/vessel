@@ -3,6 +3,7 @@
    source
    |> parse
    |> extend           (AST visitors: @crud, @paginate, etc.)
+   |> validate         (symbol table, type checks, cycle detection)
    |> resolve(target)  (merge universal + target-scoped annotations)
    |> generate         (per-target code generation)
    |> emit             (write to disk)
@@ -146,8 +147,17 @@ let emit out_dir outputs =
 
 let compile ?target source out_dir =
   let selected = select_targets target in
-  source
-  |> parse
-  |> extend
+  let ast =
+    source
+    |> parse
+    |> extend
+  in
+  (* Validate before codegen — fail early on semantic errors *)
+  (match Validate.validate ast with
+   | Ok _symbols -> ()
+   | Error errors ->
+     List.iter (fun e -> Printf.eprintf "error: %s\n" e) errors;
+     failwith (Printf.sprintf "validation failed with %d error(s)" (List.length errors)));
+  ast
   |> generate selected
   |> emit out_dir

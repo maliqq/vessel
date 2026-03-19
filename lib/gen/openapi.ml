@@ -1,11 +1,37 @@
 (* Generate OpenAPI 3.1 YAML using the yaml library *)
 
+(* ── YAML helpers ────────────────────────────────────────────────── *)
+
 let ystr s : Yaml.value = `String s
 let yobj pairs : Yaml.value = `O pairs
 let ylist items : Yaml.value = `A items
 let ybool b : Yaml.value = `Bool b
 
-(* ── Route resolution ──────────────────────────────────────────────── *)
+(* ── Type mapping (AST → Yaml.value tree) ────────────────────────── *)
+
+let rec yaml_of_type : Ast.typ -> Yaml.value = function
+  | Ast.Prim Ast.String  -> yobj ["type", ystr "string"]
+  | Ast.Prim Ast.Int     -> yobj ["type", ystr "integer"]
+  | Ast.Prim Ast.Int64   -> yobj ["type", ystr "integer"; "format", ystr "int64"]
+  | Ast.Prim Ast.Float   -> yobj ["type", ystr "number"]
+  | Ast.Prim Ast.Byte    -> yobj ["type", ystr "integer";
+                                   "minimum", `Float 0.0; "maximum", `Float 255.0]
+  | Ast.Prim Ast.Bool    -> yobj ["type", ystr "boolean"]
+  | Ast.Prim Ast.Binary  -> yobj ["type", ystr "string"; "contentEncoding", ystr "base64"]
+  | Ast.Prim Ast.Uuid    -> yobj ["type", ystr "string"; "format", ystr "uuid"]
+  | Ast.Prim Ast.Uuid_v7 -> yobj ["type", ystr "string"; "format", ystr "uuid"]
+  | Ast.Prim Ast.Void    -> yobj ["type", ystr "object"]
+  | Ast.Named n          -> yobj ["$ref", ystr ("#/components/schemas/" ^ n)]
+  | Ast.Ref n            -> yobj ["$ref", ystr ("#/components/schemas/" ^ Emitter.ref_id n)]
+  | Ast.Option t         -> yaml_of_type t
+  | Ast.List t           -> yobj ["type", ystr "array"; "items", yaml_of_type t]
+  | Ast.Set t            -> yobj ["type", ystr "array"; "uniqueItems", `Bool true;
+                                   "items", yaml_of_type t]
+  | Ast.Tuple _          -> yobj ["type", ystr "array"]
+  | Ast.Map (_, v)       -> yobj ["type", ystr "object";
+                                   "additionalProperties", yaml_of_type v]
+
+(* ── Route resolution ────────────────────────────────────────────── *)
 
 let resolve_base_path ~name ~annotations =
   match Emitter.find_annotation "rest" annotations with
@@ -28,7 +54,7 @@ let method_to_route base (m : Ast.method_decl) =
   | "delete" -> ("delete", base ^ "/{id}")
   | name     -> ("post", base ^ "/" ^ name)
 
-(* ── Param classification ──────────────────────────────────────────── *)
+(* ── Param classification ────────────────────────────────────────── *)
 
 let is_ref_param (p : Ast.param) =
   match p.typ with Ast.Ref _ -> true | _ -> false
@@ -38,19 +64,19 @@ let partition_params params =
   let body_params = List.filter (fun p -> not (is_ref_param p)) params in
   (path_params, body_params)
 
-(* ── Operation builder ─────────────────────────────────────────────── *)
+(* ── Operation builder ───────────────────────────────────────────── *)
 
 let build_path_param (p : Ast.param) : Yaml.value =
   yobj [
     "name", ystr p.name;
     "in", ystr "path";
     "required", ybool true;
-    "schema", Emitter.yaml_of_type p.typ;
+    "schema", yaml_of_type p.typ;
   ]
 
 let build_request_body (params : Ast.param list) : Yaml.value =
   let properties = List.map (fun (p : Ast.param) ->
-    (p.name, Emitter.yaml_of_type p.typ)
+    (p.name, yaml_of_type p.typ)
   ) params in
   yobj [
     "required", ybool true;
@@ -73,7 +99,7 @@ let build_response (return_type : Ast.typ) (raises : string list) : Yaml.value =
         "description", ystr "Success";
         "content", yobj [
           "application/json", yobj [
-            "schema", Emitter.yaml_of_type rt;
+            "schema", yaml_of_type rt;
           ]
         ]
       ]
@@ -109,7 +135,7 @@ let build_operation ~service_name (m : Ast.method_decl) : Yaml.value =
 
   yobj with_responses
 
-(* ── Path collection ───────────────────────────────────────────────── *)
+(* ── Path collection ─────────────────────────────────────────────── *)
 
 type route = {
   http_method : string;
@@ -141,7 +167,7 @@ let collect_paths (file : Ast.file) : (string * route list) list =
   List.rev !path_order
   |> List.map (fun path -> (path, Hashtbl.find paths path))
 
-(* ── Paths section ─────────────────────────────────────────────────── *)
+(* ── Paths section ───────────────────────────────────────────────── *)
 
 let build_paths (file : Ast.file) : (string * Yaml.value) list =
   let grouped = collect_paths file in
@@ -154,12 +180,12 @@ let build_paths (file : Ast.file) : (string * Yaml.value) list =
     ) grouped in
     ["paths", yobj path_entries]
 
-(* ── Components section ────────────────────────────────────────────── *)
+(* ── Components section ──────────────────────────────────────────── *)
 
 let build_schema_component = function
   | Ast.Struct s ->
     let properties = List.map (fun (f : Ast.field) ->
-      (f.name, Emitter.yaml_of_type f.typ)
+      (f.name, yaml_of_type f.typ)
     ) s.fields in
     let required = List.filter_map (fun (f : Ast.field) ->
       if not f.optional then Some (ystr f.name) else None
@@ -176,7 +202,7 @@ let build_schema_component = function
     Some (e.name, yobj ["type", ystr "string"; "enum", ylist members])
 
   | Ast.Union u ->
-    let variants = List.map Emitter.yaml_of_type u.variants in
+    let variants = List.map yaml_of_type u.variants in
     Some (u.name, yobj ["oneOf", ylist variants])
 
   | _ -> None
@@ -198,7 +224,7 @@ let build_components (file : Ast.file) : (string * Yaml.value) list =
   | [] -> []
   | _ -> ["components", yobj ["schemas", yobj all_schemas]]
 
-(* ── Main entry point ──────────────────────────────────────────────── *)
+(* ── Main entry point ────────────────────────────────────────────── *)
 
 let generate (file : Ast.file) : string =
   let doc = yobj (

@@ -1,6 +1,27 @@
 (* Generate TypeScript type definitions *)
 
-(* ── Literal → TypeScript ──────────────────────────────────────────── *)
+(* ── Type mapping ────────────────────────────────────────────────── *)
+
+let rec ts_type = function
+  | Ast.Prim Ast.String -> "string"
+  | Ast.Prim Ast.Int -> "number"
+  | Ast.Prim Ast.Int64 -> "bigint"
+  | Ast.Prim Ast.Float -> "number"
+  | Ast.Prim Ast.Byte -> "number"
+  | Ast.Prim Ast.Bool -> "boolean"
+  | Ast.Prim Ast.Binary -> "Uint8Array"
+  | Ast.Prim Ast.Uuid -> "string"
+  | Ast.Prim Ast.Uuid_v7 -> "string"
+  | Ast.Prim Ast.Void -> "void"
+  | Ast.Named n -> n
+  | Ast.Ref n -> Emitter.ref_id n
+  | Ast.Option t -> ts_type t ^ " | undefined"
+  | Ast.Tuple ts -> "[" ^ String.concat ", " (List.map ts_type ts) ^ "]"
+  | Ast.List t -> ts_type t ^ "[]"
+  | Ast.Set t -> "Set<" ^ ts_type t ^ ">"
+  | Ast.Map (k, v) -> "Record<" ^ ts_type k ^ ", " ^ ts_type v ^ ">"
+
+(* ── Literal → TypeScript ────────────────────────────────────────── *)
 
 let rec lit_to_ts = function
   | Ast.Lit_string s -> "\"" ^ s ^ "\""
@@ -9,7 +30,7 @@ let rec lit_to_ts = function
   | Ast.Lit_bool b -> string_of_bool b
   | Ast.Lit_array xs -> "[" ^ String.concat ", " (List.map lit_to_ts xs) ^ "]"
 
-(* ── Section emitters ──────────────────────────────────────────────── *)
+(* ── Section emitters ────────────────────────────────────────────── *)
 
 let emit_branded_ids line blank refs =
   List.iter (fun name ->
@@ -29,7 +50,7 @@ let emit_struct line blank = function
     line (Printf.sprintf "export interface %s {" s.name);
     List.iter (fun (f : Ast.field) ->
       let opt = if f.optional then "?" else "" in
-      line (Printf.sprintf "  %s%s: %s" f.name opt (Emitter.ts_type f.typ))
+      line (Printf.sprintf "  %s%s: %s" f.name opt (ts_type f.typ))
     ) s.fields;
     line "}";
     blank ()
@@ -46,7 +67,7 @@ let emit_enum line blank = function
 
 let emit_union line blank = function
   | Ast.Union u ->
-    let variants = List.map Emitter.ts_type u.variants in
+    let variants = List.map ts_type u.variants in
     line (Printf.sprintf "export type %s = %s" u.name (String.concat " | " variants));
     blank ()
   | _ -> ()
@@ -56,9 +77,9 @@ let emit_service line blank = function
     line (Printf.sprintf "export interface %sHandlers {" s.name);
     List.iter (fun (m : Ast.method_decl) ->
       let params = List.map (fun (p : Ast.param) ->
-        p.name ^ ": " ^ Emitter.ts_type p.typ
+        p.name ^ ": " ^ ts_type p.typ
       ) m.params in
-      let ret = Emitter.ts_type m.return_type in
+      let ret = ts_type m.return_type in
       let raises_comment = match m.raises with
         | [] -> ""
         | rs -> " // throws " ^ String.concat " | " rs
@@ -70,7 +91,7 @@ let emit_service line blank = function
     blank ()
   | _ -> ()
 
-(* ── Main entry point ──────────────────────────────────────────────── *)
+(* ── Main entry point ────────────────────────────────────────────── *)
 
 let generate (file : Ast.file) : string =
   let buf = Buffer.create 4096 in

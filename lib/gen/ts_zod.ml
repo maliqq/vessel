@@ -1,6 +1,27 @@
 (* Generate Zod validation schemas *)
 
-(* ── Section emitters ──────────────────────────────────────────────── *)
+(* ── Type mapping ────────────────────────────────────────────────── *)
+
+let rec zod_type = function
+  | Ast.Prim Ast.String -> "z.string()"
+  | Ast.Prim Ast.Int -> "z.number().int()"
+  | Ast.Prim Ast.Int64 -> "z.bigint()"
+  | Ast.Prim Ast.Float -> "z.number()"
+  | Ast.Prim Ast.Byte -> "z.number().int().min(0).max(255)"
+  | Ast.Prim Ast.Bool -> "z.boolean()"
+  | Ast.Prim Ast.Binary -> "z.instanceof(Uint8Array)"
+  | Ast.Prim Ast.Uuid -> "z.string().uuid()"
+  | Ast.Prim Ast.Uuid_v7 -> "z.string().uuid()"
+  | Ast.Prim Ast.Void -> "z.void()"
+  | Ast.Named n -> n ^ "Schema"
+  | Ast.Ref n -> Emitter.ref_id n ^ "Schema"
+  | Ast.Option t -> zod_type t ^ ".optional()"
+  | Ast.Tuple ts -> "z.tuple([" ^ String.concat ", " (List.map zod_type ts) ^ "])"
+  | Ast.List t -> "z.array(" ^ zod_type t ^ ")"
+  | Ast.Set t -> "z.set(" ^ zod_type t ^ ")"
+  | Ast.Map (_, v) -> "z.record(z.string(), " ^ zod_type v ^ ")"
+
+(* ── Section emitters ────────────────────────────────────────────── *)
 
 let emit_branded_ids line blank refs =
   List.iter (fun name ->
@@ -13,7 +34,7 @@ let emit_struct line blank = function
   | Ast.Struct s ->
     line (Printf.sprintf "export const %sSchema = z.object({" s.name);
     List.iter (fun (f : Ast.field) ->
-      let zt = Emitter.zod_type f.typ in
+      let zt = zod_type f.typ in
       let zt = if f.optional then zt ^ ".optional()" else zt in
       line (Printf.sprintf "  %s: %s," f.name zt)
     ) s.fields;
@@ -33,7 +54,7 @@ let emit_enum line blank = function
 
 let emit_union line blank = function
   | Ast.Union u ->
-    let schemas = List.map Emitter.zod_type u.variants in
+    let schemas = List.map zod_type u.variants in
     line (Printf.sprintf "export const %sSchema = z.union([%s])"
       u.name (String.concat ", " schemas));
     blank ()
@@ -45,7 +66,7 @@ let emit_service_request_schemas line blank = function
       if m.params <> [] then begin
         line (Printf.sprintf "export const %s_%sRequestSchema = z.object({" s.name m.name);
         List.iter (fun (p : Ast.param) ->
-          line (Printf.sprintf "  %s: %s," p.name (Emitter.zod_type p.typ))
+          line (Printf.sprintf "  %s: %s," p.name (zod_type p.typ))
         ) m.params;
         line "})";
         blank ()
@@ -53,7 +74,7 @@ let emit_service_request_schemas line blank = function
     ) s.methods
   | _ -> ()
 
-(* ── Main entry point ──────────────────────────────────────────────── *)
+(* ── Main entry point ────────────────────────────────────────────── *)
 
 let generate (file : Ast.file) : string =
   let buf = Buffer.create 4096 in
