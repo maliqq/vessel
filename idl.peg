@@ -66,7 +66,9 @@ RaisesClause    <- RAISES PascalIdent (COMMA PascalIdent)*
 
 # ── Annotations ──────────────────────────────────────────────────────
 
-Annotation      <- AT Ident AnnotationArgs? Spacing
+Annotation      <- AT Ident AnnotationTarget? AnnotationArgs? Spacing
+
+AnnotationTarget <- COLON Ident
 
 AnnotationArgs  <- LPAREN NamedArgs RPAREN
                  / LPAREN Literal RPAREN
@@ -178,6 +180,7 @@ EQUAL           <- '=' Spacing
 PIPE            <- '|' Spacing
 QUESTION        <- '?' Spacing
 HASH            <- '#' Spacing
+COLON           <- ':' Spacing
 LBRACKET        <- '[' Spacing
 RBRACKET        <- ']' Spacing
 

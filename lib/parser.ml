@@ -301,8 +301,12 @@ let parse_annotation inp : Ast.annotation =
   let l = loc inp in
   expect_char inp '@';
   let name = parse_ident inp in
+  let target = match peek inp with
+    | Some ':' -> advance inp; skip_whitespace inp; Some (parse_ident inp)
+    | _ -> None
+  in
   let args = parse_args inp in
-  { Ast.name; args; loc = l }
+  { Ast.name; target; args; loc = l }
 
 let parse_annotations inp =
   let rec go acc =

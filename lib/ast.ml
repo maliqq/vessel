@@ -23,6 +23,7 @@ type directive = {
 
 type annotation = {
   name : string;
+  target : string option;
   args : args;
   loc : loc;
 }

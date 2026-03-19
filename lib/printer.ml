@@ -38,7 +38,11 @@ let pp_directive (d : Ast.directive) =
   "#" ^ d.name ^ pp_args d.args
 
 let pp_annotation (a : Ast.annotation) =
-  "@" ^ a.name ^ pp_args a.args
+  let target_suffix = match a.target with
+    | Some t -> ":" ^ t
+    | None -> ""
+  in
+  "@" ^ a.name ^ target_suffix ^ pp_args a.args
 
 let pp_decl = function
   | Ast.Struct s ->

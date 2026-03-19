@@ -33,6 +33,13 @@ let ref_id name = name ^ "Id"
 let find_annotation name (anns : Ast.annotation list) =
   List.find_opt (fun (a : Ast.annotation) -> a.name = name) anns
 
+let annotations_for_target target_name (anns : Ast.annotation list) =
+  List.filter (fun (a : Ast.annotation) ->
+    match a.target with
+    | None -> true
+    | Some t -> t = target_name
+  ) anns
+
 let annotation_string_arg key (a : Ast.annotation) =
   match a.args with
   | Ast.Args_single (Ast.Lit_string s) when key = "" -> Some s
