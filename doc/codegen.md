@@ -1,17 +1,58 @@
 # Vessel — Code Generation
 
+## Purpose
+
+Vessel code generation is for strict, deterministic glue.
+
+The generator should produce the boring shell around handwritten logic:
+
+- type definitions
+- schema definitions
+- route descriptions
+- handler or trait surfaces
+- transport and adapter boilerplate
+
+The generator should not be treated as a place for handwritten business logic.
+
+Generated code is expected to be:
+
+- auto-generated
+- disposable
+- reproducible
+- not edited by hand
+
 ## Pipeline
 
-```
-IDL source → Parser → AST → Semantic validation → Code generation
+Current flow:
+
+```text
+IDL source -> Parser -> AST -> AST transforms -> Validation -> Target resolution -> Code generation -> Emit
 ```
 
-1. **Parser** — tokenize, parse syntax, attach annotations, preserve source locations
-2. **AST** — mirrors syntax (struct, enum, union, service, method, field, annotation, type)
-3. **Semantic validation** — resolve named types, validate references, validate Map keys, expand `@crud`, detect duplicates
-4. **Code generation** — emit TypeScript types, handler interfaces, route scaffolding, client SDK
+More concretely:
 
-## TypeScript type mapping
+1. Parse source into the shared AST
+2. Apply AST-to-AST extensions such as `@crud`
+3. Validate the resulting AST
+4. Resolve target-specific annotations
+5. Generate target output
+6. Write generated files
+
+There is no IR or lowered representation between the parsed AST and the target generators.
+
+## Current Targets
+
+Current implemented outputs:
+
+- TypeScript types
+- Zod schemas
+- JSON Schema
+- OpenAPI
+- Rust types
+
+## Type Mapping
+
+### TypeScript
 
 | IDL | TypeScript |
 |---|---|
@@ -22,200 +63,172 @@ IDL source → Parser → AST → Semantic validation → Code generation
 | `byte` | `number` |
 | `bool` | `boolean` |
 | `binary` | `Uint8Array` |
-| `uuid` | `string & { readonly __brand: "Uuid" }` |
-| `uuid_v7` | `string & { readonly __brand: "UuidV7" }` |
+| `uuid` | `string` |
+| `uuid_v7` | `string` |
 | `void` | `void` |
 | `List<T>` | `T[]` |
+| `Set<T>` | `Set<T>` |
 | `Map<K, V>` | `Record<K, V>` |
 | `Option<T>` | `T \| undefined` |
+| `Tuple<A, B>` | `[A, B]` |
+| `*Type` | `TypeId` |
 
-## Reference types
+Reference IDs are generated as branded string-like aliases. The current generator uses Vessel-specific marker metadata rather than a plain `__brand` field name.
 
-`*Company` generates a branded ID type:
+### Rust
 
-```typescript
-export type CompanyId = string & { readonly __brand: "CompanyId" }
+| IDL | Rust |
+|---|---|
+| `string` | `String` |
+| `int` | `i32` |
+| `int64` | `i64` |
+| `float` | `f64` |
+| `byte` | `u8` |
+| `bool` | `bool` |
+| `binary` | `Vec<u8>` |
+| `uuid` | `String` |
+| `uuid_v7` | `String` |
+| `void` | `()` |
+| `List<T>` | `Vec<T>` |
+| `Set<T>` | `HashSet<T>` |
+| `Map<K, V>` | `HashMap<K, V>` |
+| `Option<T>` | `Option<T>` |
+| `Tuple<A, B>` | `(A, B)` |
+| `*Type` | `TypeId` |
+
+Rust output is intentionally straightforward reflection of the AST:
+
+- structs become `pub struct`
+- enums become `pub enum`
+- unions become `pub enum`
+- services become `pub trait`
+- refs become `pub type FooId = String;`
+
+## Reference Types
+
+`*Company` means a typed reference or handle, not an embedded value.
+
+In generated code that becomes a generated ID type, for example:
+
+- TypeScript: `CompanyId`
+- Rust: `CompanyId`
+
+The representation is target-specific, but the semantic role is the same: a typed identity handle.
+
+## What `@crud` Does
+
+`@crud` is an AST extension pass, not a special-case generator hack.
+
+It injects methods like:
+
+- `create`
+- `get`
+- `update`
+- `delete`
+- `list`
+
+Those generated methods then flow through validation and code generation the same way as handwritten service methods.
+
+## Current Generator Behavior
+
+### TypeScript types
+
+The TypeScript generator currently emits:
+
+- ref ID aliases
+- constants
+- interfaces for structs
+- string-union types for enums
+- union aliases
+- `*Handlers` interfaces for services
+
+Method `raises` clauses are currently emitted as comments on the generated handler methods.
+
+### Zod schemas
+
+The Zod generator currently emits:
+
+- ref ID schemas
+- struct schemas
+- enum schemas
+- union schemas
+- request schemas for service methods with parameters
+
+### JSON Schema
+
+The JSON Schema generator currently emits:
+
+- `$defs` entries for ref IDs
+- struct definitions
+- enum definitions
+- union definitions
+- const definitions
+
+Services are not emitted into JSON Schema.
+
+### OpenAPI
+
+The OpenAPI generator currently emits:
+
+- `paths` for services
+- `components.schemas` for structs, enums, unions, and ref IDs
+
+The current route mapping is convention-based:
+
+- `create` -> `POST <base>`
+- `list` -> `GET <base>`
+- `get` -> `GET <base>/{id}`
+- `update` -> `PUT <base>/{id}`
+- `delete` -> `DELETE <base>/{id}`
+- other methods -> `POST <base>/<method>`
+
+This is intentionally simple. It is useful generated glue, not a full routing DSL.
+
+### Rust
+
+The Rust generator currently emits:
+
+- `pub type` aliases for ref IDs
+- `pub const` values
+- `pub struct`
+- `pub enum`
+- `pub trait` handler surfaces for services
+
+When needed, it also emits:
+
+- `use std::collections::HashSet;`
+- `use std::collections::HashMap;`
+
+The Rust target is currently structural and minimal. It does not yet add derives, macros, lifetimes, or richer ecosystem-specific integrations.
+
+## Service Model
+
+`service` should be read as an operation surface, not as a REST-only concept.
+
+That means codegen should remain flexible enough to support surfaces such as:
+
+- API
+- CLI
+- engine adapters
+- blockchain or smart-contract entrypoints
+
+The shared file-level shapes define the domain vocabulary. Target-specific annotations and generators decide how each service surface is projected into glue code.
+
+## Design Constraint
+
+The code generator should stay deterministic and boring.
+
+That means:
+
+- no handwritten edits in generated files
+- no business logic hiding inside generators
+- no unnecessary target-specific magic
+- no extra lowering layer or IR
+
+The intended structure is:
+
+```text
+DSL -> AST -> AST transforms -> generated glue -> handwritten entrypoints
 ```
 
-All `*Company` fields and params use `CompanyId` in generated code.
-
-## Struct generation
-
-IDL:
-```
-struct Company {
-  string name;
-  string description?;
-  *Company parent?;
-}
-```
-
-TypeScript:
-```typescript
-export interface Company {
-  name: string
-  description?: string
-  parent?: CompanyId
-}
-```
-
-## Enum generation
-
-IDL:
-```
-enum EmploymentType {
-  FULL_TIME;
-  CONTRACT;
-}
-```
-
-TypeScript:
-```typescript
-export type EmploymentType =
-  | "FULL_TIME"
-  | "CONTRACT"
-```
-
-## Union generation
-
-IDL:
-```
-union MediaContent = Photo | Video | Audio;
-```
-
-TypeScript:
-```typescript
-export type MediaContent = Photo | Video | Audio
-```
-
-## @crud expansion
-
-`@crud` on a service generates five standard methods:
-
-| Generated method | HTTP | Route |
-|---|---|---|
-| `create(data: T): Promise<TId>` | `POST /` | create |
-| `get(id: TId): Promise<T>` | `GET /:id` | read |
-| `update(id: TId, data: T): Promise<void>` | `PUT /:id` | update |
-| `delete(id: TId): Promise<void>` | `DELETE /:id` | delete |
-| `list(): Promise<TId[]>` | `GET /` | list |
-
-Where `T` is the struct matching the service name, and `TId` is its reference type.
-
-## Handler interface generation
-
-IDL:
-```
-@crud
-service Company {
-  add(*Company company, Job job) *Job raises ValidationError;
-}
-```
-
-TypeScript:
-```typescript
-export interface CompanyHandlers {
-  // @crud
-  create(data: Company): Promise<CompanyId>
-  get(id: CompanyId): Promise<Company>
-  update(id: CompanyId, data: Company): Promise<void>
-  delete(id: CompanyId): Promise<void>
-  list(): Promise<CompanyId[]>
-
-  // custom
-  add(company: CompanyId, job: Job): Promise<JobId>
-}
-```
-
-## Raises → error types
-
-IDL:
-```
-get(*Company id) Company raises NotFound, Unauthorized;
-```
-
-TypeScript:
-```typescript
-get(id: CompanyId): Promise<Company>  // throws NotFound | Unauthorized
-```
-
-Error types are generated as discriminated unions or classes depending on codegen target.
-
-## @rest route scaffolding
-
-`@rest(base="/api/v1/companies")` generates HTTP route bindings.
-
-| Method | HTTP | Route |
-|---|---|---|
-| `create` | `POST` | `/api/v1/companies` |
-| `get` | `GET` | `/api/v1/companies/:id` |
-| `update` | `PUT` | `/api/v1/companies/:id` |
-| `delete` | `DELETE` | `/api/v1/companies/:id` |
-| `list` | `GET` | `/api/v1/companies` |
-| `add` | `POST` | `/api/v1/companies/:id/add` |
-
-Custom methods become `POST /<base>/:id/<method_name>`.
-
-Routes call into the handler interface. Bun example:
-
-```typescript
-app.post("/api/v1/companies", async (req) => {
-  const data = await req.json()
-  const id = await handlers.create(data)
-  return Response.json({ id })
-})
-```
-
-## Client SDK generation
-
-Generated client mirrors the handler interface:
-
-```typescript
-const client = createCompanyClient("http://localhost:3000")
-
-await client.create({ name: "Acme", description: "..." })
-await client.get(companyId)
-await client.update(companyId, { name: "Acme Inc" })
-await client.delete(companyId)
-await client.list()
-await client.add(companyId, job)
-```
-
-## @paginate
-
-Methods annotated with `@paginate` generate cursor-based pagination:
-
-```typescript
-list(cursor?: string, limit?: number): Promise<{
-  items: CompanyId[]
-  next_cursor?: string
-}>
-```
-
-## OCaml module layout
-
-```
-lib/
-  ast.ml          AST types
-  parser.ml       recursive-descent parser
-  printer.ml      AST pretty-printer
-  semantics.ml    type resolution, validation (planned)
-  crud.ml         @crud expansion (planned)
-  ts_types.ml     TypeScript type generation (planned)
-  ts_handlers.ml  handler interface generation (planned)
-  bun_routes.ml   Bun route scaffolding (planned)
-  ts_client.ml    client SDK generation (planned)
-  emitter.ml      file output (planned)
-```
-
-## CLI
-
-```
-idlc compile schema.idl --out ./generated
-```
-
-Future:
-```
-idlc diff old.idl new.idl
-idlc check schema.idl
-```
+The generated layer mounts into handwritten functions or modules that own the meaningful behavior.
